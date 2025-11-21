@@ -1,16 +1,16 @@
 {
   "domain": "cascade_climate",
   "name": "Cascade Climate",
-  "version": "0.1.0",
   "codeowners": [
     "@vrlo"
   ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/vrlo/ha-cascade-climate",
-  "issue_tracker": "https://github.com/vrlo/ha-cascade-climate/issues",
   "integration_type": "service",
   "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/vrlo/ha-cascade-climate/issues",
   "quality_scale": "bronze",
-  "requirements": []
+  "requirements": [],
+  "version": "0.1.0"
 }

@@ -54,7 +54,7 @@ async def test_form(hass: HomeAssistant) -> None:
     assert result["errors"] == {}
 
     with patch(
-        "homeassistant.components.cascade_climate.async_setup_entry",
+        "custom_components.cascade_climate.async_setup_entry",
         return_value=True,
     ) as mock_setup_entry:
         result2 = await hass.config_entries.flow.async_configure(
@@ -102,7 +102,7 @@ async def test_form_no_optional_sensors(hass: HomeAssistant) -> None:
     )
 
     with patch(
-        "homeassistant.components.cascade_climate.async_setup_entry",
+        "custom_components.cascade_climate.async_setup_entry",
         return_value=True,
     ) as mock_setup_entry:
         result2 = await hass.config_entries.flow.async_configure(
