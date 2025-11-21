@@ -1,0 +1,88 @@
+{
+  "options": {
+    "step": {
+      "init": {
+        "description": "Configure cascade climate controller parameters",
+        "data": {
+          "outside_sensor": "Outside temperature sensor (optional)",
+          "forecast_entity": "Weather entity for forecast (optional)",
+          "base_radiator_temp": "Base radiator temperature",
+          "proportional_gain": "Proportional gain",
+          "integral_gain": "Integral gain",
+          "min_radiator_temp": "Minimum radiator temperature",
+          "hysteresis": "Hysteresis",
+          "min_cycle_duration": "Minimum cycle duration (seconds)",
+          "outdoor_gain": "Outdoor temperature gain",
+          "outdoor_baseline": "Outdoor baseline temperature",
+          "observer_mode": "Energy observer mode",
+          "heating_rate": "Heating rate (°C/s)",
+          "cooling_rate": "Cooling rate (°C/s)",
+          "observer_alpha": "Fusion weight",
+          "pump_dead_time": "Pump dead time"
+        },
+        "data_description": {
+          "outside_sensor": "Select the temperature sensor that measures outside temperature",
+          "forecast_entity": "Select the weather entity for temperature forecasting",
+          "base_radiator_temp": "Base radiator temperature when no error or compensation is applied",
+          "proportional_gain": "Proportional gain factor for the outer cascade loop",
+          "integral_gain": "Integral gain factor that removes steady-state error",
+          "min_radiator_temp": "Minimum radiator temperature setpoint",
+          "hysteresis": "Temperature hysteresis for pump on/off control",
+          "min_cycle_duration": "Minimum time between pump state changes",
+          "outdoor_gain": "Gain factor for outdoor temperature compensation",
+          "outdoor_baseline": "Outdoor temperature baseline for compensation",
+          "observer_mode": "Choose how radiator energy is estimated (sensor-only, runtime, or fusion)",
+          "heating_rate": "Estimated rate the radiator heats up once hot water reaches it",
+          "cooling_rate": "Estimated rate the radiator cools when the pump is off",
+          "observer_alpha": "Blend factor for the fusion observer (1 favors sensor readings)",
+          "pump_dead_time": "Seconds to ignore heating rate after the pump turns on"
+        }
+      }
+    }
+  },
+  "selector": {
+    "observer_mode": {
+      "options": {
+        "sensor": "Sensor only",
+        "runtime": "Pump runtime",
+        "fusion": "Fusion (sensor + runtime)"
+      }
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "description": "Set up a cascade climate controller",
+        "data": {
+          "name": "Name",
+          "room_sensor": "Room temperature sensor",
+          "radiator_sensor": "Radiator temperature sensor",
+          "pump_switch": "Pump switch",
+          "outside_sensor": "Outside temperature sensor (optional)",
+          "forecast_entity": "Weather entity for forecast (optional)",
+          "base_radiator_temp": "Base radiator temperature",
+          "proportional_gain": "Proportional gain",
+          "min_radiator_temp": "Minimum radiator temperature",
+          "hysteresis": "Hysteresis",
+          "min_cycle_duration": "Minimum cycle duration (seconds)",
+          "outdoor_gain": "Outdoor temperature gain",
+          "outdoor_baseline": "Outdoor baseline temperature"
+        },
+        "data_description": {
+          "name": "A name for this cascade climate controller",
+          "room_sensor": "Select the temperature sensor that measures the room temperature",
+          "radiator_sensor": "Select the temperature sensor that measures the radiator temperature",
+          "pump_switch": "Select the switch that controls the heating pump",
+          "outside_sensor": "Select the temperature sensor that measures outside temperature (optional)",
+          "forecast_entity": "Select the weather entity for temperature forecasting (optional)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the device"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  }
+}

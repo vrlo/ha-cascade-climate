@@ -1,0 +1,73 @@
+[project]
+name = "cascade-climate"
+version = "0.1.0"
+description = "Cascade Climate Controller for Home Assistant"
+requires-python = ">=3.13.2"
+dependencies = []
+
+[dependency-groups]
+# Development dependencies (not published to PyPI)
+dev = [
+  "mypy>=1.0.0",
+  "ruff>=0.1.0",
+]
+test = [
+  "homeassistant==2025.11.2",                      # Pin specific version
+  "pytest>=8.0.0",
+  "pytest-asyncio",                                # Let pytest-homeassistant-custom-component determine version
+  "pytest-cov>=4.1.0",
+  "pytest-homeassistant-custom-component>=0.13.0", # Key dependency!
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+exclude = ["tests", "tests.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Marker for integration tests
+markers = ["integration: Integration tests"]
+
+[tool.coverage.run]
+source = ["custom_components"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "def __repr__",
+  "raise AssertionError",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+  "@abstractmethod",
+]
+
+
+[tool.rumdl]
+# Global configuration options
+line-length = 120
+disable = []
+exclude = [
+  # Common directories to exclude
+  ".git",
+  ".github",
+  "node_modules",
+  "vendor",
+  "dist",
+  "build",
+]
+respect-gitignore = true
+
+[tool.rumdl.MD013]
+reflow = true # Enable reflowing of lines
