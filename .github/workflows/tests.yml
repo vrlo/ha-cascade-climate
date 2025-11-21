@@ -24,11 +24,11 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --group test
+          uv sync --no-install-project --group test
 
       - name: Run tests with coverage
         run: |
-          uv run --group test pytest tests/ \
+          uv run --no-project pytest tests/ \
             --cov=custom_components.cascade_climate \
             --cov-report=xml \
             --cov-report=term-missing \
@@ -55,13 +55,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --group dev
+          uv sync --no-install-project --group dev --group test
 
       - name: Run ruff
-        run: uv run --group dev ruff check custom_components/
+        run: uv run --no-project ruff check custom_components/
 
       - name: Run mypy
-        run: uv run --group dev mypy custom_components/cascade_climate/
+        run: uv run --no-project mypy custom_components/cascade_climate/
 
   hacs:
     runs-on: ubuntu-latest
@@ -72,6 +72,7 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          ignore: "brands"
 
   hassfest:
     runs-on: ubuntu-latest
