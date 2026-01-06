@@ -73,25 +73,47 @@ uv run mypy custom_components/cascade_climate/
 
 ### Testing
 
+**IMPORTANT:** This project uses `just` recipes for testing to work around an editable install issue
+with Home Assistant's component loader. Always use `just` commands instead of calling pytest
+directly.
+
 ```bash
 # Run all tests with coverage (recommended)
-uv run pytest tests/ \
-  --cov=custom_components.cascade_climate \
-  --cov-report term-missing \
-  -v
+just tests
 
 # Run specific test file
-uv run pytest tests/test_climate.py -v
+just test-file test_climate.py
 
 # Run with durations to identify slow tests
-uv run pytest tests/ --durations=10
+just tests-durations
 
 # Update test snapshots (when intentionally changing entity states/attributes)
-uv run pytest tests/ --snapshot-update
-# Then re-run without --snapshot-update to verify
+just snapshots
+# Then re-run with just tests to verify
 
 # Quick test of changed files only
-uv run pytest --picked
+just test-picked
+```
+
+**Why not call pytest directly?**
+
+When using `uv sync`, the package is installed in editable mode by default. This creates
+`__editable__.cascade_climate-*.finder` artifacts in `site-packages/` that cause Home Assistant's
+component loader to fail with `FileNotFoundError` during integration tests. The `just` recipes
+handle this by:
+
+1. Removing editable install artifacts before test runs
+2. Using `PYTHONPATH="$PWD"` to add the project to the import path
+3. Using `uv run --no-project` to avoid re-triggering editable install
+
+If you need to call pytest directly for debugging:
+
+```bash
+# Remove editable artifacts first
+rm -f .venv/lib/python*/site-packages/__editable__*cascade*
+
+# Run pytest with proper environment
+PYTHONPATH="$PWD" uv run --no-project pytest tests/test_climate.py -v
 ```
 
 ### CI/CD

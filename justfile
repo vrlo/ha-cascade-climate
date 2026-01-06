@@ -8,16 +8,20 @@ lint:
 mypy:
     uv run --group dev mypy custom_components/cascade_climate/
 
-# Run all tests with coverage
+# Run all tests with coverage (removes editable install artifacts first)
 tests:
-    uv run --group test pytest tests/ \
+    #!/usr/bin/env bash
+    rm -f .venv/lib/python3.*/site-packages/__editable__*cascade* 2>/dev/null || true
+    PYTHONPATH="$PWD" uv run --no-project pytest tests/ \
       --cov=custom_components.cascade_climate \
       --cov-report term-missing \
       -v
 
 # Run tests with durations
 tests-durations:
-    uv run --group test pytest tests/ \
+    #!/usr/bin/env bash
+    rm -f .venv/lib/python3.*/site-packages/__editable__*cascade* 2>/dev/null || true
+    PYTHONPATH="$PWD" uv run --no-project pytest tests/ \
       --cov=custom_components.cascade_climate \
       --cov-report term-missing \
       --durations=10 \
@@ -25,15 +29,21 @@ tests-durations:
 
 # Update test snapshots
 snapshots:
-    uv run --group test pytest tests/ --snapshot-update
+    #!/usr/bin/env bash
+    rm -f .venv/lib/python3.*/site-packages/__editable__*cascade* 2>/dev/null || true
+    PYTHONPATH="$PWD" uv run --no-project pytest tests/ --snapshot-update
 
 # Run tests on changed files only
 test-picked:
-    uv run --group test pytest --picked
+    #!/usr/bin/env bash
+    rm -f .venv/lib/python3.*/site-packages/__editable__*cascade* 2>/dev/null || true
+    PYTHONPATH="$PWD" uv run --no-project pytest --picked
 
 # Run specific test file
 test-file FILE:
-    uv run --group test pytest tests/{{FILE}} -v
+    #!/usr/bin/env bash
+    rm -f .venv/lib/python3.*/site-packages/__editable__*cascade* 2>/dev/null || true
+    PYTHONPATH="$PWD" uv run --no-project pytest tests/{{FILE}} -v
 
 # Install/sync dependencies
 sync:
