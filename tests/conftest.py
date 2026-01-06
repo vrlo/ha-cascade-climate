@@ -1,7 +1,15 @@
 """Global test fixtures for cascade_climate."""
 
+import sys
+from pathlib import Path
+
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+# Add the repository root to Python path so the custom component can be imported
+_ROOT = Path(__file__).parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 # Enable the pytest-homeassistant-custom-component plugin
 pytest_plugins = ["pytest_homeassistant_custom_component"]
@@ -17,6 +25,7 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 async def enable_custom_integrations(hass):
     """Enable custom integrations (async override to fix compatibility)."""
     from homeassistant.loader import DATA_CUSTOM_COMPONENTS
+
     if DATA_CUSTOM_COMPONENTS in hass.data:
         hass.data.pop(DATA_CUSTOM_COMPONENTS)
     yield
@@ -26,6 +35,7 @@ async def enable_custom_integrations(hass):
 async def entity_registry(hass):
     """Return an empty, loaded, entity registry."""
     from homeassistant.helpers import entity_registry as er
+
     return er.async_get(hass)
 
 
@@ -98,6 +108,7 @@ def mock_config_entry():
 def platforms():
     """Fixture to specify platforms to test."""
     from homeassistant.const import Platform
+
     return [Platform.CLIMATE]
 
 
@@ -107,9 +118,15 @@ async def init_integration(hass, mock_config_entry, platforms):
     from unittest.mock import patch
 
     # Create mock sensor and switch entities
-    hass.states.async_set("sensor.room_temperature", "20.0", {"unit_of_measurement": "°C"})
-    hass.states.async_set("sensor.radiator_temperature", "30.0", {"unit_of_measurement": "°C"})
-    hass.states.async_set("sensor.outside_temperature", "5.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set(
+        "sensor.room_temperature", "20.0", {"unit_of_measurement": "°C"}
+    )
+    hass.states.async_set(
+        "sensor.radiator_temperature", "30.0", {"unit_of_measurement": "°C"}
+    )
+    hass.states.async_set(
+        "sensor.outside_temperature", "5.0", {"unit_of_measurement": "°C"}
+    )
     hass.states.async_set("switch.pump", "off")
     hass.states.async_set("weather.home", "sunny")
 

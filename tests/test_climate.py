@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 from datetime import timedelta
-from unittest.mock import patch
+from typing import Any
 
 import pytest
 
@@ -24,7 +24,6 @@ from custom_components.cascade_climate.const import (
     DEFAULT_OUTDOOR_BASELINE,
     DEFAULT_OUTDOOR_GAIN,
     DEFAULT_UPDATE_INTERVAL,
-    DOMAIN,
     MAX_RADIATOR_TEMP,
     ObserverMode,
 )
@@ -39,15 +38,20 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import (
     ATTR_ENTITY_ID,
-    SERVICE_TURN_OFF,
-    SERVICE_TURN_ON,
     STATE_OFF,
-    STATE_ON,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, State
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.restore_state import STORAGE_KEY
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+    async_mock_restore_state_shutdown_restart,
+    mock_restore_cache,
+    mock_restore_cache_with_extra_data,
+)
 
 
 BASE_CONFIG = CascadeClimateConfig(
@@ -95,7 +99,7 @@ async def test_climate_entity_setup(
     # Check entity state
     state = hass.states.get(entity_id)
     assert state
-    assert state.state == HVACMode.HEAT
+    assert state.state == HVACMode.OFF  # New installations default to OFF
     assert state.attributes.get(ATTR_TEMPERATURE) == 21.0
 
 
@@ -185,7 +189,9 @@ async def test_cascade_control_pump_on(
     )
 
     # Simulate radiator temperature dropping below setpoint
-    hass.states.async_set("sensor.radiator_temperature", "25.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set(
+        "sensor.radiator_temperature", "25.0", {"unit_of_measurement": "°C"}
+    )
     await hass.async_block_till_done()
 
     # Fire time to trigger evaluation
@@ -201,17 +207,19 @@ async def test_cascade_control_pump_off(
     init_integration: MockConfigEntry,
 ) -> None:
     """Test cascade control turns pump off when radiator is hot."""
-    entity_id = "climate.cascade_climate"
-
     # First ensure pump is on by setting low radiator temp
-    hass.states.async_set("sensor.radiator_temperature", "20.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set(
+        "sensor.radiator_temperature", "20.0", {"unit_of_measurement": "°C"}
+    )
     await hass.async_block_till_done()
 
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=130))
     await hass.async_block_till_done()
 
     # Now simulate radiator heating up
-    hass.states.async_set("sensor.radiator_temperature", "45.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set(
+        "sensor.radiator_temperature", "45.0", {"unit_of_measurement": "°C"}
+    )
     await hass.async_block_till_done()
 
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=260))
@@ -244,7 +252,9 @@ async def test_outdoor_temperature_compensation(
     entity_id = "climate.cascade_climate"
 
     # Set a low outdoor temperature
-    hass.states.async_set("sensor.outside_temperature", "-5.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set(
+        "sensor.outside_temperature", "-5.0", {"unit_of_measurement": "°C"}
+    )
     await hass.async_block_till_done()
 
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=35))
@@ -442,17 +452,19 @@ async def test_min_cycle_duration(
     init_integration: MockConfigEntry,
 ) -> None:
     """Test minimum cycle duration prevents rapid switching."""
-    entity_id = "climate.cascade_climate"
-
     # Turn pump on
-    hass.states.async_set("sensor.radiator_temperature", "20.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set(
+        "sensor.radiator_temperature", "20.0", {"unit_of_measurement": "°C"}
+    )
     await hass.async_block_till_done()
 
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=130))
     await hass.async_block_till_done()
 
     # Quickly try to turn it off (within min cycle duration)
-    hass.states.async_set("sensor.radiator_temperature", "45.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set(
+        "sensor.radiator_temperature", "45.0", {"unit_of_measurement": "°C"}
+    )
     await hass.async_block_till_done()
 
     # Should not switch immediately due to min_cycle_duration
@@ -507,3 +519,288 @@ async def test_entity_cleanup(
     # Entity should be removed or unavailable
     state = hass.states.get(entity_id)
     assert state is None or state.state == "unavailable"
+
+
+# --- State Restoration Tests ---
+
+
+async def test_restore_hvac_mode_off(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that HVAC mode OFF is restored after restart."""
+    entity_id = "climate.cascade_climate"
+
+    mock_restore_cache(
+        hass,
+        (State(entity_id, HVACMode.OFF, {ATTR_TEMPERATURE: 21.0}),),
+    )
+
+    hass.set_state(CoreState.starting)
+
+    hass.states.async_set("sensor.room_temperature", "20.0")
+    hass.states.async_set("sensor.radiator_temperature", "30.0")
+    hass.states.async_set("sensor.outside_temperature", "5.0")
+    hass.states.async_set("switch.pump", "off")
+    hass.states.async_set("weather.home", "sunny")
+    hass.services.async_register("switch", "turn_on", lambda _: None)
+    hass.services.async_register("switch", "turn_off", lambda _: None)
+
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == HVACMode.OFF
+
+
+async def test_restore_hvac_mode_heat(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that HVAC mode HEAT is restored after restart."""
+    entity_id = "climate.cascade_climate"
+
+    mock_restore_cache(
+        hass,
+        (State(entity_id, HVACMode.HEAT, {ATTR_TEMPERATURE: 22.5}),),
+    )
+
+    hass.set_state(CoreState.starting)
+
+    hass.states.async_set("sensor.room_temperature", "20.0")
+    hass.states.async_set("sensor.radiator_temperature", "30.0")
+    hass.states.async_set("sensor.outside_temperature", "5.0")
+    hass.states.async_set("switch.pump", "off")
+    hass.states.async_set("weather.home", "sunny")
+    hass.services.async_register("switch", "turn_on", lambda _: None)
+    hass.services.async_register("switch", "turn_off", lambda _: None)
+
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == HVACMode.HEAT
+    assert state.attributes[ATTR_TEMPERATURE] == 22.5
+
+
+async def test_restore_target_temperature(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that target temperature is restored after restart."""
+    entity_id = "climate.cascade_climate"
+
+    mock_restore_cache(
+        hass,
+        (State(entity_id, HVACMode.HEAT, {ATTR_TEMPERATURE: 19.5}),),
+    )
+
+    hass.set_state(CoreState.starting)
+
+    hass.states.async_set("sensor.room_temperature", "20.0")
+    hass.states.async_set("sensor.radiator_temperature", "30.0")
+    hass.states.async_set("sensor.outside_temperature", "5.0")
+    hass.states.async_set("switch.pump", "off")
+    hass.states.async_set("weather.home", "sunny")
+    hass.services.async_register("switch", "turn_on", lambda _: None)
+    hass.services.async_register("switch", "turn_off", lambda _: None)
+
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state.attributes[ATTR_TEMPERATURE] == 19.5
+
+
+async def test_restore_with_extra_data(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that internal controller state is restored from extra data."""
+    entity_id = "climate.cascade_climate"
+
+    extra_data = {
+        "room_error_integral": 150.5,
+        "last_pump_switch_iso": "2024-01-15T10:30:00+00:00",
+        "radiator_estimate": 38.5,
+        "pump_on_since_iso": None,
+    }
+
+    mock_restore_cache_with_extra_data(
+        hass,
+        ((State(entity_id, HVACMode.HEAT, {ATTR_TEMPERATURE: 21.0}), extra_data),),
+    )
+
+    hass.set_state(CoreState.starting)
+
+    hass.states.async_set("sensor.room_temperature", "20.0")
+    hass.states.async_set("sensor.radiator_temperature", "30.0")
+    hass.states.async_set("sensor.outside_temperature", "5.0")
+    hass.states.async_set("switch.pump", "off")
+    hass.states.async_set("weather.home", "sunny")
+    hass.services.async_register("switch", "turn_on", lambda _: None)
+    hass.services.async_register("switch", "turn_off", lambda _: None)
+
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes.get("estimated_radiator_temperature") == 38.5
+
+
+async def test_no_restore_state_uses_defaults(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that new installations default to OFF mode."""
+    entity_id = "climate.cascade_climate"
+
+    hass.set_state(CoreState.starting)
+
+    hass.states.async_set("sensor.room_temperature", "20.0")
+    hass.states.async_set("sensor.radiator_temperature", "30.0")
+    hass.states.async_set("sensor.outside_temperature", "5.0")
+    hass.states.async_set("switch.pump", "off")
+    hass.states.async_set("weather.home", "sunny")
+    hass.services.async_register("switch", "turn_on", lambda _: None)
+    hass.services.async_register("switch", "turn_off", lambda _: None)
+
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == HVACMode.OFF
+    assert state.attributes[ATTR_TEMPERATURE] == 21.0
+
+
+async def test_restore_invalid_state_uses_defaults(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that invalid restored state falls back to defaults."""
+    entity_id = "climate.cascade_climate"
+
+    mock_restore_cache(
+        hass,
+        (State(entity_id, "invalid_mode", {ATTR_TEMPERATURE: "not_a_number"}),),
+    )
+
+    hass.set_state(CoreState.starting)
+
+    hass.states.async_set("sensor.room_temperature", "20.0")
+    hass.states.async_set("sensor.radiator_temperature", "30.0")
+    hass.states.async_set("sensor.outside_temperature", "5.0")
+    hass.states.async_set("switch.pump", "off")
+    hass.states.async_set("weather.home", "sunny")
+    hass.services.async_register("switch", "turn_on", lambda _: None)
+    hass.services.async_register("switch", "turn_off", lambda _: None)
+
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == HVACMode.OFF
+    assert state.attributes[ATTR_TEMPERATURE] == 21.0
+
+
+async def test_restore_pi_integral_affects_control(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that restored PI integral affects radiator setpoint calculation."""
+    entity_id = "climate.cascade_climate"
+
+    extra_data = {
+        "room_error_integral": 600.0,
+        "last_pump_switch_iso": None,
+        "radiator_estimate": None,
+        "pump_on_since_iso": None,
+    }
+
+    mock_restore_cache_with_extra_data(
+        hass,
+        ((State(entity_id, HVACMode.HEAT, {ATTR_TEMPERATURE: 22.0}), extra_data),),
+    )
+
+    hass.set_state(CoreState.starting)
+
+    hass.states.async_set("sensor.room_temperature", "21.5")
+    hass.states.async_set("sensor.radiator_temperature", "30.0")
+    hass.states.async_set("sensor.outside_temperature", "5.0")
+    hass.states.async_set("switch.pump", "off")
+    hass.states.async_set("weather.home", "sunny")
+    hass.services.async_register("switch", "turn_on", lambda _: None)
+    hass.services.async_register("switch", "turn_off", lambda _: None)
+
+    # Enable integral gain for this test
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={**mock_config_entry.data, "integral_gain": 0.01},
+    )
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    # base(35) + Kp(8)*0.5 + Ki(0.01)*600 + outdoor compensation
+    assert state.attributes.get("radiator_setpoint", 0) > 40
+
+
+async def test_extra_data_saved_correctly(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    hass_storage: dict[str, Any],
+) -> None:
+    """Test that extra state data is correctly saved for restoration."""
+    entity_id = "climate.cascade_climate"
+
+    # Set HVAC mode to heat and set temperature
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_HVAC_MODE,
+        {ATTR_ENTITY_ID: entity_id, ATTR_HVAC_MODE: HVACMode.HEAT},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_TEMPERATURE,
+        {ATTR_ENTITY_ID: entity_id, ATTR_TEMPERATURE: 23.0},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    # Trigger a state save
+    await async_mock_restore_state_shutdown_restart(hass)
+
+    # Verify saved data
+    assert STORAGE_KEY in hass_storage
+    stored_states = hass_storage[STORAGE_KEY]["data"]
+    assert len(stored_states) >= 1
+
+    # Find our entity in stored states
+    climate_state = next(
+        (s for s in stored_states if s["state"]["entity_id"] == entity_id),
+        None,
+    )
+    assert climate_state is not None
+    assert climate_state["state"]["state"] == HVACMode.HEAT
+    assert climate_state["state"]["attributes"][ATTR_TEMPERATURE] == 23.0
+
+    # Verify extra data structure
+    extra_data = climate_state.get("extra_data")
+    assert extra_data is not None
+    assert "room_error_integral" in extra_data
+    assert "last_pump_switch_iso" in extra_data
+    assert "radiator_estimate" in extra_data
+    assert "pump_on_since_iso" in extra_data

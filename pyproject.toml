@@ -53,6 +53,11 @@ exclude_lines = [
   "@abstractmethod",
 ]
 
+# Note: This project uses justfile test recipes to work around editable install
+# issues with Home Assistant's component loader. The __editable__ artifacts
+# created by `uv sync` cause FileNotFoundError during integration tests.
+# Always use `just tests` instead of calling pytest directly.
+
 
 [tool.rumdl]
 # Global configuration options

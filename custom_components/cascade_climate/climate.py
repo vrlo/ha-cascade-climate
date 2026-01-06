@@ -35,6 +35,7 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import dt as dt_util
 
@@ -71,6 +72,7 @@ from .const import (
     DEFAULT_OUTDOOR_BASELINE,
     DEFAULT_OUTDOOR_GAIN,
     DEFAULT_PUMP_DEAD_TIME,
+    DEFAULT_TARGET_TEMP,
     DEFAULT_TARGET_TEMP_STEP,
     DEFAULT_UPDATE_INTERVAL,
     MAX_RADIATOR_TEMP,
@@ -194,10 +196,14 @@ class CascadeClimateController:
             self._room_error_integral = max(
                 -limit, min(limit, self._room_error_integral)
             )
-            if LOGGER.isEnabledFor(logging.DEBUG) and (
-                self._room_error_integral == -limit
-                or self._room_error_integral == limit
-            ) and before != self._room_error_integral:
+            if (
+                LOGGER.isEnabledFor(logging.DEBUG)
+                and (
+                    self._room_error_integral == -limit
+                    or self._room_error_integral == limit
+                )
+                and before != self._room_error_integral
+            ):
                 LOGGER.debug(
                     "Cascade Climate PI: integral clamped to %.3f (limit %.3f)",
                     self._room_error_integral,
@@ -384,6 +390,40 @@ class RadiatorEnergyObserver:
         return self._estimate
 
 
+@dataclass
+class CascadeClimateExtraStoredData(ExtraStoredData):
+    """Extra stored data for cascade climate state restoration."""
+
+    room_error_integral: float
+    last_pump_switch_iso: str | None
+    radiator_estimate: float | None
+    pump_on_since_iso: str | None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict."""
+        return {
+            "room_error_integral": self.room_error_integral,
+            "last_pump_switch_iso": self.last_pump_switch_iso,
+            "radiator_estimate": self.radiator_estimate,
+            "pump_on_since_iso": self.pump_on_since_iso,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CascadeClimateExtraStoredData | None:
+        """Restore from dict."""
+        if not isinstance(data, dict):
+            return None
+        try:
+            return cls(
+                room_error_integral=float(data.get("room_error_integral", 0.0)),
+                last_pump_switch_iso=data.get("last_pump_switch_iso"),
+                radiator_estimate=data.get("radiator_estimate"),
+                pump_on_since_iso=data.get("pump_on_since_iso"),
+            )
+        except (TypeError, ValueError):
+            return None
+
+
 async def async_setup_platform(
     hass: HomeAssistant,
     config: ConfigType,
@@ -435,9 +475,7 @@ def _entry_to_config(entry) -> CascadeClimateConfig:
                 return timedelta(seconds=float(seconds))
         return default
 
-    def _get_observer_mode(
-        primary: str | None, override: str | None
-    ) -> ObserverMode:
+    def _get_observer_mode(primary: str | None, override: str | None) -> ObserverMode:
         raw = override or primary or DEFAULT_OBSERVER_MODE
         try:
             return ObserverMode(raw)
@@ -476,7 +514,7 @@ def _entry_to_config(entry) -> CascadeClimateConfig:
     )
 
 
-class CascadeClimateEntity(ClimateEntity):
+class CascadeClimateEntity(ClimateEntity, RestoreEntity):
     """Representation of the cascade-controlled climate entity."""
 
     _attr_should_poll = False
@@ -501,8 +539,8 @@ class CascadeClimateEntity(ClimateEntity):
         self._controller = CascadeClimateController(config)
         self._attr_name = name
         self._attr_unique_id = f"{entry_id}-climate"
-        self._attr_hvac_mode = HVACMode.HEAT
-        self._target_temperature = 21.0
+        self._attr_hvac_mode = HVACMode.OFF  # Safe default for new installations
+        self._target_temperature = DEFAULT_TARGET_TEMP
         self._energy_observer = RadiatorEnergyObserver(config)
 
         self._room_temp: float | None = None
@@ -516,6 +554,9 @@ class CascadeClimateEntity(ClimateEntity):
     async def async_added_to_hass(self) -> None:
         """Register callbacks when entity added to hass."""
         await super().async_added_to_hass()
+
+        # Restore previous state before setting up listeners
+        await self._async_restore_state()
 
         @callback
         def _handle_room(event: Event[EventStateChangedData]) -> None:
@@ -574,6 +615,62 @@ class CascadeClimateEntity(ClimateEntity):
         await self._refresh_sensor_cache()
         await self._evaluate_control("initial")
 
+    async def _async_restore_state(self) -> None:
+        """Restore previous entity state and internal controller state."""
+        old_state = await self.async_get_last_state()
+        extra_data = await self.async_get_last_extra_data()
+
+        if old_state is not None:
+            # Restore HVAC mode from state value
+            if old_state.state and old_state.state in [m.value for m in HVACMode]:
+                self._attr_hvac_mode = HVACMode(old_state.state)
+                LOGGER.debug("Restored HVAC mode: %s", self._attr_hvac_mode)
+
+            # Restore target temperature from attributes
+            if (temp := old_state.attributes.get(ATTR_TEMPERATURE)) is not None:
+                try:
+                    self._target_temperature = float(temp)
+                    LOGGER.debug(
+                        "Restored target temperature: %s", self._target_temperature
+                    )
+                except (TypeError, ValueError):
+                    pass
+
+        if extra_data is not None:
+            restored = CascadeClimateExtraStoredData.from_dict(extra_data.as_dict())
+            if restored is not None:
+                self._restore_controller_state(restored)
+
+    def _restore_controller_state(self, data: CascadeClimateExtraStoredData) -> None:
+        """Restore internal controller and observer state."""
+        # Restore PI integral
+        self._controller._room_error_integral = data.room_error_integral
+        LOGGER.debug("Restored PI integral: %s", data.room_error_integral)
+
+        # Restore last pump switch timestamp
+        if data.last_pump_switch_iso:
+            try:
+                self._controller._last_pump_switch = dt_util.parse_datetime(
+                    data.last_pump_switch_iso
+                )
+            except (TypeError, ValueError):
+                pass
+
+        # Restore observer estimate
+        if data.radiator_estimate is not None:
+            self._energy_observer._estimate = data.radiator_estimate
+            self._estimated_radiator_temp = data.radiator_estimate
+            LOGGER.debug("Restored radiator estimate: %s", data.radiator_estimate)
+
+        # Restore pump_on_since for observer dead time tracking
+        if data.pump_on_since_iso:
+            try:
+                self._energy_observer._pump_on_since = dt_util.parse_datetime(
+                    data.pump_on_since_iso
+                )
+            except (TypeError, ValueError):
+                pass
+
     async def async_will_remove_from_hass(self) -> None:
         """Clean up listeners when entity removed."""
         for unsub in self._unsub_listeners:
@@ -613,6 +710,24 @@ class CascadeClimateEntity(ClimateEntity):
             "supply_water_temperature": SUPPLY_WATER_TEMP,
             "max_radiator_temperature": MAX_RADIATOR_TEMP,
         }
+
+    @property
+    def extra_restore_state_data(self) -> CascadeClimateExtraStoredData:
+        """Return extra state data to be saved for restoration."""
+        return CascadeClimateExtraStoredData(
+            room_error_integral=self._controller._room_error_integral,
+            last_pump_switch_iso=(
+                self._controller._last_pump_switch.isoformat()
+                if self._controller._last_pump_switch
+                else None
+            ),
+            radiator_estimate=self._energy_observer._estimate,
+            pump_on_since_iso=(
+                self._energy_observer._pump_on_since.isoformat()
+                if self._energy_observer._pump_on_since
+                else None
+            ),
+        )
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
@@ -684,7 +799,10 @@ class CascadeClimateEntity(ClimateEntity):
             pump_on=self._controller.pump_state,
             measured_temp=self._radiator_temp,
         )
-        if LOGGER.isEnabledFor(logging.DEBUG) and self._estimated_radiator_temp is not None:
+        if (
+            LOGGER.isEnabledFor(logging.DEBUG)
+            and self._estimated_radiator_temp is not None
+        ):
             LOGGER.debug(
                 "Cascade Climate observer estimate: %.2f°C (sensor=%s, mode=%s)",
                 self._estimated_radiator_temp,
